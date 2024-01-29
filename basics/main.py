@@ -45,3 +45,36 @@ clip_epsilon = (
 gamma = 0.99
 lmbda = 0.95
 entropy_eps = 1e-4
+
+# Define an environment
+base_env = GymEnv("InvertedDoublePendulum-v4", device=device, frame_skip=frame_skip)
+
+# Transforms, Normalization
+env = TransformedEnv(
+    base_env,
+    Compose(
+        # normalize observations
+        ObservationNorm(in_keys=["observation"]),
+        DoubleToFloat(
+            in_keys=["observation"],
+        ),
+        StepCounter(),
+    ),
+)
+
+env.transform[0].init_stats(num_iter=1000, reduce_dim=0, cat_dim=0)
+
+# sanity check for the shape of our summary stats
+print("normalization constant shape:", env.transform[0].loc.shape)
+
+print("observation_spec:", env.observation_spec)
+print("reward_spec:", env.reward_spec)
+print("done_spec:", env.done_spec)
+print("action_spec:", env.action_spec)
+print("state_spec:", env.state_spec)
+
+check_env_specs(env)
+
+rollout = env.rollout(3)
+print("rollout of three steps:", rollout)
+print("Shape of the rollout TensorDict:", rollout.batch_size)
