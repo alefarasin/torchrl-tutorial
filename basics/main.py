@@ -78,3 +78,51 @@ check_env_specs(env)
 rollout = env.rollout(3)
 print("rollout of three steps:", rollout)
 print("Shape of the rollout TensorDict:", rollout.batch_size)
+
+# Policy https://pytorch.org/rl/tutorials/coding_ppo.html#policy
+actor_net = nn.Sequential(
+    nn.LazyLinear(num_cells, device=device),
+    nn.Tanh(),
+    nn.LazyLinear(num_cells, device=device),
+    nn.Tanh(),
+    nn.LazyLinear(num_cells, device=device),
+    nn.Tanh(),
+    nn.LazyLinear(2 * env.action_spec.shape[-1], device=device),
+    NormalParamExtractor(),
+)
+
+policy_module = TensorDictModule(
+    actor_net, in_keys=["observation"], out_keys=["loc", "scale"]
+)
+
+policy_module = ProbabilisticActor(
+    module=policy_module,
+    spec=env.action_spec,
+    in_keys=["loc", "scale"],
+    distribution_class=TanhNormal,
+    distribution_kwargs={
+        "min": env.action_spec.space.minimum,
+        "max": env.action_spec.space.maximum,
+    },
+    return_log_prob=True,
+    # we'll need the log-prob for the numerator of the importance weights
+)
+
+# Value network
+value_net = nn.Sequential(
+    nn.LazyLinear(num_cells, device=device),
+    nn.Tanh(),
+    nn.LazyLinear(num_cells, device=device),
+    nn.Tanh(),
+    nn.LazyLinear(num_cells, device=device),
+    nn.Tanh(),
+    nn.LazyLinear(1, device=device),
+)
+
+value_module = ValueOperator(
+    module=value_net,
+    in_keys=["observation"],
+)
+
+print("Running policy:", policy_module(env.reset()))
+print("Running value:", value_module(env.reset()))
