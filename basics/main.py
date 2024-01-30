@@ -126,3 +126,43 @@ value_module = ValueOperator(
 
 print("Running policy:", policy_module(env.reset()))
 print("Running value:", value_module(env.reset()))
+
+# Data collector
+collector = SyncDataCollector(
+    env,
+    policy_module,
+    frames_per_batch=frames_per_batch,
+    total_frames=total_frames,
+    split_trajs=False,
+    device=device,
+)
+
+# Replay buffer 
+replay_buffer = ReplayBuffer(
+    storage=LazyTensorStorage(frames_per_batch),
+    sampler=SamplerWithoutReplacement(),
+)
+
+# Loss function
+advantage_module = GAE(
+    gamma=gamma, lmbda=lmbda, value_network=value_module, average_gae=True
+)
+
+loss_module = ClipPPOLoss(
+    actor_network=policy_module,
+    critic_network=value_module,
+    clip_epsilon=clip_epsilon,
+    entropy_bonus=bool(entropy_eps),
+    entropy_coef=entropy_eps,
+    # these keys match by default but we set this for completeness
+    value_target_key=advantage_module.value_target_key,
+    critic_coef=1.0,
+    gamma=0.99,
+    loss_critic_type="smooth_l1",
+)
+
+optim = torch.optim.Adam(loss_module.parameters(), lr)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    optim, total_frames // frames_per_batch, 0.0
+)
+
