@@ -148,29 +148,9 @@ def make_composite_from_td(td):
     return composite
 
 # set seed
-def gen_params(g=10.0, batch_size=None) -> TensorDictBase:
-    """Returns a ``tensordict`` containing the physical parameters such as gravitational force and torque or speed limits."""
-    if batch_size is None:
-        batch_size = []
-    td = TensorDict(
-        {
-            "params": TensorDict(
-                {
-                    "max_speed": 8,
-                    "max_torque": 2.0,
-                    "dt": 0.05,
-                    "g": g,
-                    "m": 1.0,
-                    "l": 1.0,
-                },
-                [],
-            )
-        },
-        [],
-    )
-    if batch_size:
-        td = td.expand(batch_size).contiguous()
-    return td
+def _set_seed(self, seed: Optional[int]):
+    rng = torch.manual_seed(seed)
+    self.rng = rng
 
 # get params
 def gen_params(g=10.0, batch_size=None) -> TensorDictBase:
@@ -196,3 +176,47 @@ def gen_params(g=10.0, batch_size=None) -> TensorDictBase:
     if batch_size:
         td = td.expand(batch_size).contiguous()
     return td
+
+class PendulumEnv(EnvBase):
+    metadata = {
+        "render_modes": ["human", "rgb_array"],
+        "render_fps": 30,
+    }
+    batch_locked = False
+
+    def __init__(self, td_params=None, seed=None, device="cpu"):
+        if td_params is None:
+            td_params = self.gen_params()
+
+        super().__init__(device=device, batch_size=[])
+        self._make_spec(td_params)
+        if seed is None:
+            seed = torch.empty((), dtype=torch.int64).random_().item()
+        self.set_seed(seed)
+
+    # Helpers: _make_step and gen_params
+    gen_params = staticmethod(gen_params)
+    _make_spec = _make_spec
+
+    # Mandatory methods: _step, _reset and _set_seed
+    _reset = _reset
+    _step = staticmethod(_step)
+    _set_seed = _set_seed
+
+# testing our environment
+env = PendulumEnv()
+check_env_specs(env)
+
+print("observation_spec:", env.observation_spec)
+print("state_spec:", env.state_spec)
+print("reward_spec:", env.reward_spec)
+
+# We can execute a couple of commands too to check that the output structure matches what is expected
+td = env.reset()
+print("reset tensordict", td)
+
+# We can run the env.rand_step() to generate an action randomly from the action_spec domain. 
+# A tensordict containing the hyperparameters and the current state must be passed since our environment is stateless. 
+# In stateful contexts, env.rand_step() works perfectly too.
+td = env.rand_step(td)
+print("random step tensordict", td)
