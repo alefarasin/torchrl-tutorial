@@ -95,3 +95,54 @@ def _reset(self, tensordict):
         batch_size=tensordict.shape,
     )
     return out
+
+# make spec
+def _make_spec(self, td_params):
+    # Under the hood, this will populate self.output_spec["observation"]
+    self.observation_spec = CompositeSpec(
+        th=BoundedTensorSpec(
+            low=-torch.pi,
+            high=torch.pi,
+            shape=(),
+            dtype=torch.float32,
+        ),
+        thdot=BoundedTensorSpec(
+            low=-td_params["params", "max_speed"],
+            high=td_params["params", "max_speed"],
+            shape=(),
+            dtype=torch.float32,
+        ),
+        # we need to add the ``params`` to the observation specs, as we want
+        # to pass it at each step during a rollout
+        params=make_composite_from_td(td_params["params"]),
+        shape=(),
+    )
+    # since the environment is stateless, we expect the previous output as input.
+    # For this, ``EnvBase`` expects some state_spec to be available
+    self.state_spec = self.observation_spec.clone()
+    # action-spec will be automatically wrapped in input_spec when
+    # `self.action_spec = spec` will be called supported
+    self.action_spec = BoundedTensorSpec(
+        low=-td_params["params", "max_torque"],
+        high=td_params["params", "max_torque"],
+        shape=(1,),
+        dtype=torch.float32,
+    )
+    self.reward_spec = UnboundedContinuousTensorSpec(shape=(*td_params.shape, 1))
+
+
+def make_composite_from_td(td):
+    # custom function to convert a ``tensordict`` in a similar spec structure
+    # of unbounded values.
+    composite = CompositeSpec(
+        {
+            key: make_composite_from_td(tensor)
+            if isinstance(tensor, TensorDictBase)
+            else UnboundedContinuousTensorSpec(
+                dtype=tensor.dtype, device=tensor.device, shape=tensor.shape
+            )
+            for key, tensor in td.items()
+        },
+        shape=td.shape,
+    )
+    return composite
