@@ -59,3 +59,39 @@ def _step(tensordict):
 
 def angle_normalize(x):
     return ((x + torch.pi) % (2 * torch.pi)) - torch.pi
+
+# reset
+def _reset(self, tensordict):
+    if tensordict is None or tensordict.is_empty():
+        # if no ``tensordict`` is passed, we generate a single set of hyperparameters
+        # Otherwise, we assume that the input ``tensordict`` contains all the relevant
+        # parameters to get started.
+        tensordict = self.gen_params(batch_size=self.batch_size)
+
+    high_th = torch.tensor(DEFAULT_X, device=self.device)
+    high_thdot = torch.tensor(DEFAULT_Y, device=self.device)
+    low_th = -high_th
+    low_thdot = -high_thdot
+
+    # for non batch-locked environments, the input ``tensordict`` shape dictates the number
+    # of simulators run simultaneously. In other contexts, the initial
+    # random state's shape will depend upon the environment batch-size instead.
+    th = (
+        torch.rand(tensordict.shape, generator=self.rng, device=self.device)
+        * (high_th - low_th)
+        + low_th
+    )
+    thdot = (
+        torch.rand(tensordict.shape, generator=self.rng, device=self.device)
+        * (high_thdot - low_thdot)
+        + low_thdot
+    )
+    out = TensorDict(
+        {
+            "th": th,
+            "thdot": thdot,
+            "params": tensordict["params"],
+        },
+        batch_size=tensordict.shape,
+    )
+    return out
