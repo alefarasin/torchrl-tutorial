@@ -146,3 +146,29 @@ def make_composite_from_td(td):
         shape=td.shape,
     )
     return composite
+
+# set seed
+def gen_params(g=10.0, batch_size=None) -> TensorDictBase:
+    """Returns a ``tensordict`` containing the physical parameters such as gravitational force and torque or speed limits."""
+    if batch_size is None:
+        batch_size = []
+    td = TensorDict(
+        {
+            "params": TensorDict(
+                {
+                    "max_speed": 8,
+                    "max_torque": 2.0,
+                    "dt": 0.05,
+                    "g": g,
+                    "m": 1.0,
+                    "l": 1.0,
+                },
+                [],
+            )
+        },
+        [],
+    )
+    if batch_size:
+        td = td.expand(batch_size).contiguous()
+    return td
+
