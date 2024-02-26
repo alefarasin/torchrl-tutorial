@@ -231,3 +231,170 @@ env = TransformedEnv(
         in_keys_inv=["th", "thdot"],
     ),
 )
+
+# Writing custom transforms
+class SinTransform(Transform):
+    def _apply_transform(self, obs: torch.Tensor) -> None:
+        return obs.sin()
+
+    # The transform must also modify the data at reset time
+    def _reset(
+        self, tensordict: TensorDictBase, tensordict_reset: TensorDictBase
+    ) -> TensorDictBase:
+        return self._call(tensordict_reset)
+
+    # _apply_to_composite will execute the observation spec transform across all
+    # in_keys/out_keys pairs and write the result in the observation_spec which
+    # is of type ``Composite``
+    @_apply_to_composite
+    def transform_observation_spec(self, observation_spec):
+        return BoundedTensorSpec(
+            low=-1,
+            high=1,
+            shape=observation_spec.shape,
+            dtype=observation_spec.dtype,
+            device=observation_spec.device,
+        )
+
+class CosTransform(Transform):
+    def _apply_transform(self, obs: torch.Tensor) -> None:
+        return obs.cos()
+
+    # The transform must also modify the data at reset time
+    def _reset(
+        self, tensordict: TensorDictBase, tensordict_reset: TensorDictBase
+    ) -> TensorDictBase:
+        return self._call(tensordict_reset)
+
+    # _apply_to_composite will execute the observation spec transform across all
+    # in_keys/out_keys pairs and write the result in the observation_spec which
+    # is of type ``Composite``
+    @_apply_to_composite
+    def transform_observation_spec(self, observation_spec):
+        return BoundedTensorSpec(
+            low=-1,
+            high=1,
+            shape=observation_spec.shape,
+            dtype=observation_spec.dtype,
+            device=observation_spec.device,
+        )
+
+# Concatenates the observations onto an “observation” entry. del_keys=False ensures that we keep these values for the next iteration
+t_sin = SinTransform(in_keys=["th"], out_keys=["sin"])
+t_cos = CosTransform(in_keys=["th"], out_keys=["cos"])
+env.append_transform(t_sin)
+env.append_transform(t_cos)
+
+# Once more, let us check that our environment specs match what is received:
+cat_transform = CatTensors(
+    in_keys=["sin", "cos", "thdot"], dim=-1, out_key="observation", del_keys=False
+)
+env.append_transform(cat_transform)
+
+check_env_specs(env)
+
+# Executing a rollout
+def simple_rollout(steps=100):
+    # preallocate:
+    data = TensorDict({}, [steps])
+    # reset
+    _data = env.reset()
+    for i in range(steps):
+        _data["action"] = env.action_spec.rand()
+        _data = env.step(_data)
+        data[i] = _data
+        _data = step_mdp(_data, keep_other=True)
+    return data
+
+
+print("data from rollout:", simple_rollout(100))
+
+# Batching computations
+batch_size = 10  # number of environments to be executed in batch
+td = env.reset(env.gen_params(batch_size=[batch_size]))
+print("reset (batch size of 10)", td)
+td = env.rand_step(td)
+print("rand step (batch size of 10)", td)
+
+rollout = env.rollout(
+    3,
+    auto_reset=False,  # we're executing the reset out of the ``rollout`` call
+    tensordict=env.reset(env.gen_params(batch_size=[batch_size])),
+)
+print("rollout of len 3 (batch size of 10):", rollout)
+
+# Training a simple policy
+torch.manual_seed(0)
+env.set_seed(0)
+
+net = nn.Sequential(
+    nn.LazyLinear(64),
+    nn.Tanh(),
+    nn.LazyLinear(64),
+    nn.Tanh(),
+    nn.LazyLinear(64),
+    nn.Tanh(),
+    nn.LazyLinear(1),
+)
+policy = TensorDictModule(
+    net,
+    in_keys=["observation"],
+    out_keys=["action"],
+)
+
+optim = torch.optim.Adam(policy.parameters(), lr=2e-3)
+
+# Training loop
+# We will successively:
+# - generate a trajectory
+# - sum the rewards
+# - backpropagate through the graph defined by these operations
+# - clip the gradient norm and make an optimization step
+# - repeat
+# - At the end of the training loop, we should have a final reward close to 0 which demonstrates that the pendulum is upward and still as desired.
+batch_size = 32
+pbar = tqdm.tqdm(range(20_000 // batch_size))
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, 20_000)
+logs = defaultdict(list)
+
+for _ in pbar:
+    init_td = env.reset(env.gen_params(batch_size=[batch_size]))
+    rollout = env.rollout(100, policy, tensordict=init_td, auto_reset=False)
+    traj_return = rollout["next", "reward"].mean()
+    (-traj_return).backward()
+    gn = torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
+    optim.step()
+    optim.zero_grad()
+    pbar.set_description(
+        f"reward: {traj_return: 4.4f}, "
+        f"last reward: {rollout[..., -1]['next', 'reward'].mean(): 4.4f}, gradient norm: {gn: 4.4}"
+    )
+    logs["return"].append(traj_return.item())
+    logs["last_reward"].append(rollout[..., -1]["next", "reward"].mean().item())
+    scheduler.step()
+
+
+def plot():
+    import matplotlib
+    from matplotlib import pyplot as plt
+
+    is_ipython = "inline" in matplotlib.get_backend()
+    if is_ipython:
+        from IPython import display
+
+    with plt.ion():
+        plt.figure(figsize=(10, 5))
+        plt.subplot(1, 2, 1)
+        plt.plot(logs["return"])
+        plt.title("returns")
+        plt.xlabel("iteration")
+        plt.subplot(1, 2, 2)
+        plt.plot(logs["last_reward"])
+        plt.title("last reward")
+        plt.xlabel("iteration")
+        if is_ipython:
+            display.display(plt.gcf())
+            display.clear_output(wait=True)
+        plt.show()
+
+plot()
