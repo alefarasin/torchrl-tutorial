@@ -220,3 +220,14 @@ print("reset tensordict", td)
 # In stateful contexts, env.rand_step() works perfectly too.
 td = env.rand_step(td)
 print("random step tensordict", td)
+
+# Transforming an environment
+env = TransformedEnv(
+    env,
+    # ``Unsqueeze`` the observations that we will concatenate
+    UnsqueezeTransform(
+        unsqueeze_dim=-1,
+        in_keys=["th", "thdot"],
+        in_keys_inv=["th", "thdot"],
+    ),
+)
